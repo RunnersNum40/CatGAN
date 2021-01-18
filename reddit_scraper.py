@@ -1,11 +1,13 @@
 import os
 import ast
+from tqdm.notebook import tqdm as log_progress
 
 import praw
 import requests
 import re
 
 from PIL import Image
+
 
 #Read the api info from system enviroment. I have done this as a sucurity feature so that my account is not publicly available
 api_info = ast.literal_eval(os.environ.get("REDDIT_API_INFO"))
@@ -45,8 +47,12 @@ class Scraper:
         :param sort_type: the way to sort. Can be "top", "new", "rising", "hot"
         :param kwargs: named arguments used by :class:`praw.subreddit` when getting posts. Ex limit=100"""
         self.posts = getattr(self.sub, sort_type)(**kwargs)
+        try:
+            self.posts_len = kwargs["limit"]
+        except:
+            self.post_len = None
 
-    def save_images(self, path, relative=True):
+    def save_images(self, path, relative=True, bar=True):
         """Save the images in self.posts in the dir at the provided path
 
         :param path: the path to store the images in
@@ -54,14 +60,16 @@ class Scraper:
         :returns: the number of images found and saved"""
         saved = 0
         dir_path = os.path.dirname(os.path.realpath(__file__)) if relative else ""
-        for post in self.posts:
+        for n, post in enumerate(log_progress(self.posts, total=self.posts_len, disable=not bar)):
             url = (post.url)
             file_name = url.split("/")
             if len(file_name) == 0:
                 file_name = re.findall("/(.*?)", url)
 
-            file_name = dir_path+path+file_name[-1]
+            file_name = file_name[-1]
             if ".jpg" in file_name or ".png" in file_name:
+                file_name = f"{dir_path}{path}{n:04}{file_name[-4:]}"
+
                 r = requests.get(url)
                 saved += 1
                 with open(file_name,"wb") as f:
@@ -78,6 +86,6 @@ class Scraper:
 if __name__ == '__main__':
     cats = Scraper("cat")
     cats.query("new", limit=50)
-    path = "/images/"
+    path = "/cat_images/"
     saved = cats.save_images(path)
-    print("{} images saved to {}".format(saved, path))
+    print(f"{saved} images saved to {path}")
