@@ -29,6 +29,19 @@ import tensorflow as tf
 K.image_data_format()
 K.set_image_data_format("channels_last")
 
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        # Currently, memory growth needs to be the same across GPUs
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+    except RuntimeError as e:
+        # Memory growth must be set before GPUs have been initialized
+        print(e)
+
+
 # A function to normalize image pixels.
 def norm_img(img):
     """A function to Normalize Images.
@@ -102,6 +115,7 @@ def savegrid(ims, rows=None, cols=None, fill=True, showax=False):
 def save_img_batch(img_batch, img_save_dir):
     """Takes as input a image batch and a img_save_dir and saves 16 images from the batch in a 4x4 grid in the img_save_dir
     """
+    plt.close("all")
     plt.figure(figsize=(16,16))
     gs1 = gridspec.GridSpec(4, 4)
     gs1.update(wspace=0, hspace=0)
@@ -233,7 +247,7 @@ class GAN:
 
 
 
-    def train(self, data_dir, num_steps=1000, batch_size=64, save_intervals=(10, 500), img_save_dir=None, log_dir=None):
+    def train(self, data_dir, num_steps=1000, batch_size=64, save_intervals=(10, 500), save_model_dir=None, img_save_dir=None, log_dir=None):
         # Use a fixed noise vector to see how the GAN Images transition through time on a fixed noise. 
         fixed_noise = gen_noise(16, self.noise_shape)
 
@@ -304,7 +318,7 @@ class GAN:
             print("Step %d completed. Time took: %s secs." % (tot_step, diff_time))
             
             # save model at every 500 steps
-            if ((tot_step+1) % save_intervals[1]) == 0:
+            if ((tot_step+1) % save_intervals[1]) == 0 or step == num_steps-1:
                 print("-----------------------------------------------------------------")
                 print("Average Disc_fake loss: %f" % (np.mean(self.avg_disc_fake_loss))) 
                 print("Average Disc_real loss: %f" % (np.mean(self.avg_disc_real_loss))) 
@@ -347,7 +361,7 @@ if __name__ == "__main__":
     # Shape of noise vector to be input to the Generator
     noise_shape = (1,1,100)
     # Number of steps for training. num_epochs = num_steps*batch_size/data_size
-    num_steps = 2000
+    num_steps = 20
     # batch size for training.
     batch_size = 64
     # Location to save images and logs 
@@ -362,4 +376,4 @@ if __name__ == "__main__":
 
     gan = GAN(image_shape, noise_shape)
 
-    gan.train(data_dir, num_steps, batch_size, (10, 10), img_save_dir, log_dir)
+    gan.train(data_dir, num_steps, batch_size, (10, 10), save_model_dir, img_save_dir, log_dir)
