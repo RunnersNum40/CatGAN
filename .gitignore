@@ -1,7 +1,11 @@
 
+images/*.png
 images/*.jpg
+
 cat_images/*.jpg
 cat_images/*.png
+
+saves/*.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
