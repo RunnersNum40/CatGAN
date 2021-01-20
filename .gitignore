@@ -1,11 +1,13 @@
+# Images
+*.jpg
+*.png
+*.jpeg
 
-images/*.png
-images/*.jpg
-
-cat_images/*.jpg
-cat_images/*.png
-
+# Misc
 saves/*.txt
+*.cat
+*.db
+*.hdf5
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

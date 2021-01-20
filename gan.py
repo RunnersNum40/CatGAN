@@ -11,6 +11,8 @@ import time
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
+from keras.datasets.mnist import load_data
+
 from keras.layers import Dense, Reshape, Conv2D, Conv2DTranspose, Dropout, Input, merge
 from keras.layers.core import Activation, Flatten
 from keras.layers.pooling import MaxPooling2D
@@ -18,7 +20,7 @@ from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import UpSampling2D
 from keras.layers.advanced_activations import LeakyReLU
 
-from keras.models import Model, load_model
+from keras.models import Model, load_model, Sequential
 from keras.optimizers import SGD, Adam, RMSprop
 from keras.initializers import RandomNormal
 
@@ -49,7 +51,7 @@ def norm_img(img):
         img : Original image as numpy array.
     Output: Normailized Image as numpy array
     """
-    img = (img / 127.5) - 1
+    img = img/255.0
     return img
 
 
@@ -59,10 +61,15 @@ def denorm_img(img):
         img : Normalized image as numpy array.
     Output: Original Image as numpy array
     """
-    img = (img + 1) * 127.5
+    img = img*255.0
     return img.astype(np.uint8) 
 
+(images1, _), (images2, _) = load_data()
 
+images1.reshape(28, 28, 60000)
+images2.reshape(28, 28, 10000)
+
+images = images1
 def sample_from_dataset(batch_size, image_shape, data_dir=None):
     """Create a batch of image samples by sampling random images from a data directory.
     Resizes the image using image_shape and normalize the images.
@@ -144,83 +151,64 @@ def gen_noise(batch_size, noise_shape):
     return np.random.normal(0, 1, size=(batch_size, )+noise_shape)
 
 
-def get_gen_normal(noise_shape):
+def get_gen_normal(noise_shape, conv_layers=4):
     """ This function takes as input shape of the noise vector and creates the Keras generator    architecture.
     """
     kernel_init = "glorot_uniform"
-    gen_input = Input(shape=noise_shape) 
-    
-    # Transpose 2D conv layer 1. 
-    generator = Conv2DTranspose(filters = 512, kernel_size = (4, 4), strides = (1, 1), padding = "valid", data_format = "channels_last", kernel_initializer = kernel_init)(gen_input)
-    generator = BatchNormalization(momentum = 0.5)(generator)
-    generator = LeakyReLU(0.2)(generator)
-    
-    # Transpose 2D conv layer 2.
-    generator = Conv2DTranspose(filters = 256, kernel_size = (4, 4), strides = (2, 2), padding = "same", data_format = "channels_last", kernel_initializer = kernel_init)(generator)
-    generator = BatchNormalization(momentum = 0.5)(generator)
-    generator = LeakyReLU(0.2)(generator)
-    
-    # Transpose 2D conv layer 3.
-    generator = Conv2DTranspose(filters = 128, kernel_size = (4, 4), strides = (2, 2), padding = "same", data_format = "channels_last", kernel_initializer = kernel_init)(generator)
-    generator = BatchNormalization(momentum = 0.5)(generator)
-    generator = LeakyReLU(0.2)(generator)
-    
-    # Transpose 2D conv layer 4.
-    generator = Conv2DTranspose(filters = 64, kernel_size = (4, 4), strides = (2, 2), padding = "same", data_format = "channels_last", kernel_initializer = kernel_init)(generator)
-    generator = BatchNormalization(momentum = 0.5)(generator)
-    generator = LeakyReLU(0.2)(generator)
-    
+
+    generator = Sequential(name="Generator")
+
+    generator.add(Input(shape=noise_shape))
+    generator.add(Conv2DTranspose(filters=512, kernel_size=(4, 4), strides=(1, 1), padding="valid", data_format="channels_last", kernel_initializer=kernel_init))
+    generator.add(BatchNormalization(momentum=0.5))
+    generator.add(LeakyReLU(0.2))
+
+    for i in range(conv_layers-2, -1, -1):
+        generator.add(Conv2DTranspose(filters=64*2**i, kernel_size=(4, 4), strides=(2, 2), padding="same", data_format="channels_last", kernel_initializer=kernel_init))
+        generator.add(BatchNormalization(momentum=0.5))
+        generator.add(LeakyReLU(0.2))
+
     # conv 2D layer 1.
-    generator = Conv2D(filters = 64, kernel_size = (3, 3), strides = (1, 1), padding = "same", data_format = "channels_last", kernel_initializer = kernel_init)(generator)
-    generator = BatchNormalization(momentum = 0.5)(generator)
-    generator = LeakyReLU(0.2)(generator)
+    generator.add(Conv2D(filters=64, kernel_size=(3, 3), strides=(1, 1), padding="same", data_format="channels_last", kernel_initializer=kernel_init))
+    generator.add(BatchNormalization(momentum = 0.5))
+    generator.add(LeakyReLU(0.2))
     
     # Final Transpose 2D conv layer 5 to generate final image. Filter size 3 for 3 image channel
-    generator = Conv2DTranspose(filters = 3, kernel_size = (4, 4), strides = (2, 2), padding = "same", data_format = "channels_last", kernel_initializer = kernel_init)(generator)
+    generator.add(Conv2DTranspose(filters=3, kernel_size=(4, 4), strides=(2, 2), padding="same", data_format="channels_last", kernel_initializer=kernel_init))
     
     # Tanh activation to get final normalized image
-    generator = Activation("tanh")(generator)
+    generator.add(Activation("tanh"))
     
     # defining the optimizer and compiling the generator model.
     gen_opt = Adam(lr=0.00015, beta_1=0.5)
-    generator_model = Model(inputs=gen_input, outputs=generator, name="Generator")
-    generator_model.compile(loss="binary_crossentropy", optimizer=gen_opt, metrics=["accuracy"])
-    generator_model.summary()
-    return generator_model
+    generator.compile(loss="binary_crossentropy", optimizer=gen_opt, metrics=["accuracy"])
+    # generator.summary()
+    return generator
 
 
-def get_disc_normal(image_shape=(64, 64, 3)):
+def get_disc_normal(image_shape=(64, 64, 3), conv_layers=4):
     dropout_prob = 0.4
     kernel_init = "glorot_uniform"
-    dis_input = Input(shape=image_shape)
     
-    # Conv layer 1:
-    discriminator = Conv2D(filters = 64, kernel_size = (4, 4), strides = (2, 2), padding = "same", data_format = "channels_last", kernel_initializer = kernel_init)(dis_input)
-    discriminator = LeakyReLU(0.2)(discriminator)
-    # Conv layer 2:
-    discriminator = Conv2D(filters = 128, kernel_size = (4, 4), strides = (2, 2), padding = "same", data_format = "channels_last", kernel_initializer = kernel_init)(discriminator)
-    discriminator = BatchNormalization(momentum = 0.5)(discriminator)
-    discriminator = LeakyReLU(0.2)(discriminator)
-    # Conv layer 3:   
-    discriminator = Conv2D(filters = 256, kernel_size = (4, 4), strides = (2, 2), padding = "same", data_format = "channels_last", kernel_initializer = kernel_init)(discriminator)
-    discriminator = BatchNormalization(momentum = 0.5)(discriminator)
-    discriminator = LeakyReLU(0.2)(discriminator)
-    # Conv layer 4:
-    discriminator = Conv2D(filters = 512, kernel_size = (4, 4), strides = (2, 2), padding = "same", data_format = "channels_last", kernel_initializer = kernel_init)(discriminator)
-    discriminator = BatchNormalization(momentum = 0.5)(discriminator)
-    discriminator = LeakyReLU(0.2)(discriminator)#discriminator = MaxPooling2D(pool_size=(2, 2))(discriminator)
+    discriminator = Sequential(name="Discriminator")
+    discriminator.add(Input(shape=image_shape))
+
+    for i in range(conv_layers):
+        discriminator.add(Conv2D(filters=64*2**i, kernel_size=(4, 4), strides=(2, 2), padding="same", data_format="channels_last", kernel_initializer=kernel_init))
+        discriminator.add(BatchNormalization(momentum = 0.5))
+        discriminator.add(LeakyReLU(0.2))
+
     # Flatten
-    discriminator = Flatten()(discriminator)
+    discriminator.add(Flatten())
     # Dense Layer
-    discriminator = Dense(1)(discriminator)
+    discriminator.add(Dense(1))
     # Sigmoid Activation
-    discriminator = Activation("sigmoid")(discriminator)
+    discriminator.add(Activation("sigmoid"))
     # Optimizer and Compiling model
     dis_opt = Adam(lr=0.0002, beta_1=0.5)
-    discriminator_model = Model(inputs=dis_input, outputs=discriminator, name="Discriminator")
-    discriminator_model.compile(loss="binary_crossentropy", optimizer=dis_opt, metrics=["accuracy"])
-    discriminator_model.summary()
-    return discriminator_model
+    discriminator.compile(loss="binary_crossentropy", optimizer=dis_opt, metrics=["accuracy"])
+    # discriminator.summary()
+    return discriminator
 
 
 class GAN:
@@ -228,8 +216,8 @@ class GAN:
         self.image_shape = image_shape
         self.noise_shape = noise_shape
 
-        self.discriminator = get_disc_normal(self.image_shape) if discriminator_save == None else keras.models.load_model(discriminator_save)
-        self.generator = get_gen_normal(self.noise_shape) if generator_save == None else keras.models.load_model(generator_save)
+        self.discriminator = get_disc_normal(self.image_shape, 4) if discriminator_save == None else load_model(discriminator_save)
+        self.generator = get_gen_normal(self.noise_shape, int(np.log2(image_shape[0]))-2) if generator_save == None else load_model(generator_save)
 
         self.discriminator.trainable = False
 
@@ -245,6 +233,8 @@ class GAN:
         self.gan = Model(inputs=gen_inp, outputs=GAN_opt)
         self.gan.compile(loss="binary_crossentropy", optimizer=opt, metrics=["accuracy"])
 
+        self.print_status = False
+
 
 
     def train(self, data_dir, num_steps=1000, batch_size=64, save_intervals=(10, 500), save_model_dir=None, img_save_dir=None, log_dir=None):
@@ -259,7 +249,7 @@ class GAN:
         # We will run for num_steps iterations
         for step in range(num_steps): 
             tot_step = step
-            print("Begin step: ", tot_step)
+            if self.print_status: print("Begin step: ", tot_step)
             # to keep track of time per step
             step_begin_time = time.time() 
             
@@ -286,9 +276,10 @@ class GAN:
 
             # Training Discriminator seperately on real data
             dis_metrics_real = self.discriminator.train_on_batch(real_data_X, real_data_Y) 
+
             # training Discriminator seperately on fake data
             dis_metrics_fake = self.discriminator.train_on_batch(fake_data_X, fake_data_Y) 
-            print("Disc: real loss: %f fake loss: %f" % (dis_metrics_real[0], dis_metrics_fake[0]))
+            if self.print_status: print("Disc: real loss: %f fake loss: %f" % (dis_metrics_real[0], dis_metrics_fake[0]))
             
             # Save the losses to plot later
             self.avg_disc_fake_loss.append(dis_metrics_fake[0])
@@ -302,7 +293,7 @@ class GAN:
             GAN_Y = real_data_Y
            
             gan_metrics = self.gan.train_on_batch(GAN_X, GAN_Y)
-            print("GAN loss: %f" % (gan_metrics[0]))
+            if self.print_status: print("GAN loss: %f" % (gan_metrics[0]))
             
             # Log results by opening a file in append mode
             log_dir = log_dir if log_dir != None else img_save_dir
@@ -315,7 +306,7 @@ class GAN:
                     
             end_time = time.time()
             diff_time = int(end_time - step_begin_time)
-            print("Step %d completed. Time took: %s secs." % (tot_step, diff_time))
+            if self.print_status: print("Step %d completed. Time took: %s secs." % (tot_step, diff_time))
             
             # save model at every 500 steps
             if ((tot_step+1) % save_intervals[1]) == 0 or step == num_steps-1:
@@ -361,19 +352,19 @@ if __name__ == "__main__":
     # Shape of noise vector to be input to the Generator
     noise_shape = (1,1,100)
     # Number of steps for training. num_epochs = num_steps*batch_size/data_size
-    num_steps = 20
+    num_steps = 50000
     # batch size for training.
     batch_size = 64
     # Location to save images and logs 
     img_save_dir = "images/"
     # Image size to reshape to
-    image_shape = (64,64,3)
+    image_shape = (32, 32, 3)
     # Location of data directory
-    data_dir = "cat_images/*"
+    data_dir = "archive/blue/*.png"
     # set up log and save directories
     log_dir = "saves/"
     save_model_dir = "saves/"
 
     gan = GAN(image_shape, noise_shape)
-
-    gan.train(data_dir, num_steps, batch_size, (10, 10), save_model_dir, img_save_dir, log_dir)
+    # gan.print_status = True
+    gan.train(data_dir, num_steps, batch_size, (100, 500), save_model_dir, img_save_dir, log_dir)
