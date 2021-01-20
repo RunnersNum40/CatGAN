@@ -51,7 +51,7 @@ def norm_img(img):
         img : Original image as numpy array.
     Output: Normailized Image as numpy array
     """
-    img = img/255.0
+    img = img/127.5 - 1
     return img
 
 
@@ -61,7 +61,7 @@ def denorm_img(img):
         img : Normalized image as numpy array.
     Output: Original Image as numpy array
     """
-    img = img*255.0
+    img = (img+1)*127.5
     return img.astype(np.uint8) 
 
 (images1, _), (images2, _) = load_data()
@@ -148,7 +148,7 @@ def gen_noise(batch_size, noise_shape):
         noise_shape: shape of noise vector, normally kept as 100 
     Output:a numpy vector sampled from normal distribution of shape                                  (batch_size, noise_shape)     
     """
-    return np.random.normal(0, 1, size=(batch_size, )+noise_shape)
+    return np.random.randn(batch_size, *noise_shape)
 
 
 def get_gen_normal(noise_shape, conv_layers=4):
@@ -172,24 +172,24 @@ def get_gen_normal(noise_shape, conv_layers=4):
     generator.add(Conv2D(filters=64, kernel_size=(3, 3), strides=(1, 1), padding="same", data_format="channels_last", kernel_initializer=kernel_init))
     generator.add(BatchNormalization(momentum = 0.5))
     generator.add(LeakyReLU(0.2))
-    
+
     # Final Transpose 2D conv layer 5 to generate final image. Filter size 3 for 3 image channel
     generator.add(Conv2DTranspose(filters=3, kernel_size=(4, 4), strides=(2, 2), padding="same", data_format="channels_last", kernel_initializer=kernel_init))
-    
+
     # Tanh activation to get final normalized image
     generator.add(Activation("tanh"))
-    
+
     # defining the optimizer and compiling the generator model.
-    gen_opt = Adam(lr=0.00015, beta_1=0.5)
+    gen_opt = Adam(lr=0.0002, beta_1=0.5)
     generator.compile(loss="binary_crossentropy", optimizer=gen_opt, metrics=["accuracy"])
-    # generator.summary()
+    generator.summary()
     return generator
 
 
 def get_disc_normal(image_shape=(64, 64, 3), conv_layers=4):
     dropout_prob = 0.4
     kernel_init = "glorot_uniform"
-    
+
     discriminator = Sequential(name="Discriminator")
     discriminator.add(Input(shape=image_shape))
 
@@ -252,13 +252,13 @@ class GAN:
             if self.print_status: print("Begin step: ", tot_step)
             # to keep track of time per step
             step_begin_time = time.time() 
-            
+
             # sample a batch of normalized images from the dataset
             real_data_X = sample_from_dataset(batch_size, self.image_shape, data_dir=data_dir)
-            
+
             # Genearate noise to send as input to the generator
             noise = gen_noise(batch_size, self.noise_shape)
-            
+
             # Use generator to create(predict) images
             fake_data_X = self.generator.predict(noise)
 
@@ -267,8 +267,11 @@ class GAN:
                 save_img_batch(fake_data_X, f"{img_save_dir}{tot_step:05d}_image.png")
 
             # Create the labels for real and fake data. We don"t give exact ones and zeros but add a small amount of noise. This is an important GAN training trick
-            real_data_Y = np.ones(batch_size) - np.random.random_sample(batch_size)*0.2
-            fake_data_Y = np.random.random_sample(batch_size)*0.2
+            real_data_Y = np.random.random_sample(batch_size)*0.2/np.log(tot_step+2)+1
+            fake_data_Y = np.random.random_sample(batch_size)*0.2/np.log(tot_step+2)
+
+            real_data_Y[batch_size//16:] -= 1
+            fake_data_Y[batch_size//16:] += 1
 
             # train the discriminator using data and labels
             self.discriminator.trainable = True
@@ -279,45 +282,45 @@ class GAN:
 
             # training Discriminator seperately on fake data
             dis_metrics_fake = self.discriminator.train_on_batch(fake_data_X, fake_data_Y) 
-            if self.print_status: print("Disc: real loss: %f fake loss: %f" % (dis_metrics_real[0], dis_metrics_fake[0]))
-            
+
             # Save the losses to plot later
             self.avg_disc_fake_loss.append(dis_metrics_fake[0])
             self.avg_disc_real_loss.append(dis_metrics_real[0])
-            
+
             # Train the generator using a random vector of noise and its labels (1"s with noise)
             self.generator.trainable = True
             self.discriminator.trainable = False
 
             GAN_X = gen_noise(batch_size, self.noise_shape)
             GAN_Y = real_data_Y
-           
+
             gan_metrics = self.gan.train_on_batch(GAN_X, GAN_Y)
-            if self.print_status: print("GAN loss: %f" % (gan_metrics[0]))
-            
+
             # Log results by opening a file in append mode
             log_dir = log_dir if log_dir != None else img_save_dir
+            message = f"Step: {tot_step} Disc: real loss: {dis_metrics_real[0]} fake loss: {dis_metrics_fake[0]} GAN loss: {gan_metrics[0]}\n"
             text_file = open(log_dir+"\\training_log.txt", "a")
-            text_file.write("Step: %d Disc: real loss: %f fake loss: %f GAN loss: %f\n" % (tot_step, dis_metrics_real[0], dis_metrics_fake[0], gan_metrics[0]))
+            text_file.write(message)
             text_file.close()
+            if self.print_status: print(f"Step: {tot_step} Disc: real loss: {dis_metrics_real[0]} fake loss: {dis_metrics_fake[0]} GAN loss: {gan_metrics[0]}\n")
 
             # save GAN loss to plot later
             self.avg_GAN_loss.append(gan_metrics[0])
-                    
+
             end_time = time.time()
             diff_time = int(end_time - step_begin_time)
-            if self.print_status: print("Step %d completed. Time took: %s secs." % (tot_step, diff_time))
-            
+
             # save model at every 500 steps
-            if ((tot_step+1) % save_intervals[1]) == 0 or step == num_steps-1:
+            if tot_step > 0 and (tot_step % save_intervals[1]) == 0 or step == num_steps-1:
                 print("-----------------------------------------------------------------")
-                print("Average Disc_fake loss: %f" % (np.mean(self.avg_disc_fake_loss))) 
-                print("Average Disc_real loss: %f" % (np.mean(self.avg_disc_real_loss))) 
-                print("Average GAN loss: %f" % (np.mean(self.avg_GAN_loss)))
+                print(f"Average Disc_fake loss: {np.mean(self.avg_disc_fake_loss)}") 
+                print(f"Average Disc_real loss: {np.mean(self.avg_disc_real_loss)}") 
+                print(f"Average GAN loss: {np.mean(self.avg_GAN_loss)}")
                 print("-----------------------------------------------------------------")
                 self.discriminator.trainable = False
                 self.generator.trainable = False
                 # predict on fixed_noise
+                noise = gen_noise(batch_size, self.noise_shape)
                 fixed_noise_generate = self.generator.predict(noise)
                 step_num = str(tot_step).zfill(4)
                 save_img_batch(fixed_noise_generate, img_save_dir+step_num+"fixed_image.png")
@@ -354,13 +357,13 @@ if __name__ == "__main__":
     # Number of steps for training. num_epochs = num_steps*batch_size/data_size
     num_steps = 50000
     # batch size for training.
-    batch_size = 64
+    batch_size = 128
     # Location to save images and logs 
     img_save_dir = "images/"
     # Image size to reshape to
     image_shape = (32, 32, 3)
     # Location of data directory
-    data_dir = "archive/blue/*.png"
+    data_dir = "archive/CAT_*/*.jpg"
     # set up log and save directories
     log_dir = "saves/"
     save_model_dir = "saves/"
